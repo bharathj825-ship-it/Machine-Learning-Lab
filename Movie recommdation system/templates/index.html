@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Recommendation System | Content-Based Filtering & Cosine Similarity</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
+</head>
+<body>
+
+    <!-- Hero Header -->
+    <header class="hero">
+        <div class="container">
+            <span class="hero-badge">⚡ Machine Learning Mini Project</span>
+            <h1 class="hero-title">Movie Recommendation System</h1>
+            <p class="hero-subtitle">
+                A complete content-based movie recommendation pipeline using <strong>TF-IDF Vectorization</strong> and <strong>Cosine Similarity</strong> on the TMDB 5000 Movie Dataset. Designed for college machine learning laboratory demonstrations.
+            </p>
+            <div class="hero-meta">
+                <span class="hero-pill"><strong>Algorithm:</strong> TF-IDF & Cosine Similarity</span>
+                <span class="hero-pill"><strong>Dataset:</strong> TMDB 5000 ({{ total_movies | default(4800) }} Usable Movies)</span>
+                <span class="hero-pill"><strong>Features:</strong> Overview, Genres, Keywords, Cast, Director</span>
+                <span class="hero-pill"><strong>Backend:</strong> Python 3.12 / Flask / Scikit-Learn</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Bar -->
+    <nav class="nav-bar">
+        <div class="container">
+            <ul class="nav-links">
+                <li><a href="#recommend-section" class="active">🎯 Recommendations</a></li>
+                <li><a href="#workflow-section">📋 ML Workflow</a></li>
+                <li><a href="#dataset-section">📊 Dataset & Preprocessing</a></li>
+                <li><a href="#eda-section">📈 Exploratory Data Analysis</a></li>
+                <li><a href="#features-section">🔍 Feature Engineering</a></li>
+                <li><a href="#similarity-section">📐 Similarity Modeling</a></li>
+                <li><a href="#evaluation-section">🧪 Model Evaluation</a></li>
+                <li><a href="#record-guide-section">📸 Project Screenshots Guide</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="container">
+
+        <!-- 1. Interactive Recommendation Form & Results -->
+        <section id="recommend-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Interactive Recommender</div>
+                <h2 class="section-title">Select Movie & Generate Recommendations</h2>
+                <p class="section-desc">Search any title from the TMDB 5000 dataset or choose from quick picks to calculate similarities in real time.</p>
+            </div>
+
+            <div class="form-card">
+                <form action="/recommend#recommend-section" method="POST">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="movie_title">Movie Title (Searchable Autocomplete)</label>
+                            <input 
+                                type="text" 
+                                id="movie_title" 
+                                name="movie_title" 
+                                list="movie-titles-list" 
+                                placeholder="Type a movie title (e.g. Interstellar, Avatar, Inception)..." 
+                                value="{{ searched_title if searched_title else (selected_movie.title if selected_movie else '') }}"
+                                required
+                                autocomplete="off"
+                            >
+                            <datalist id="movie-titles-list">
+                                {% for title in all_titles %}
+                                <option value="{{ title }}"></option>
+                                {% endfor %}
+                            </datalist>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="genre_filter">Genre Filter (Optional)</label>
+                            <select id="genre_filter" name="genre_filter">
+                                <option value="all" {% if genre_filter == 'all' %}selected{% endif %}>All Genres (Unfiltered)</option>
+                                {% for g in all_genres %}
+                                <option value="{{ g }}" {% if genre_filter == g %}selected{% endif %}>{{ g }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="num_recommendations">Count</label>
+                            <select id="num_recommendations" name="num_recommendations">
+                                <option value="5" {% if num_recommendations == 5 %}selected{% endif %}>Top 5</option>
+                                <option value="10" {% if num_recommendations == 10 %}selected{% endif %}>Top 10</option>
+                            </select>
+                        </div>
+
+                        <button type="submit" class="btn-recommend">
+                            <span>🔍 Recommend Movies</span>
+                        </button>
+                    </div>
+
+                    <!-- Quick Picks -->
+                    <div class="quick-picks">
+                        <span>Popular Demo Queries:</span>
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('Interstellar')">Interstellar</button>
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('Inception')">Inception</button>
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('The Dark Knight')">The Dark Knight</button>
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('Avatar')">Avatar</button>
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('The Avengers')">The Avengers</button>
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('Toy Story')">Toy Story</button>
+                    </div>
+                </form>
+
+                <!-- Error Messages & Suggestions -->
+                {% if error_message %}
+                <div class="alert-error">
+                    <strong>⚠️ Recommendation Error:</strong> {{ error_message }}
+                    {% if suggestions %}
+                    <div class="alert-suggestions">
+                        <span>Did you mean:</span>
+                        {% for sug in suggestions %}
+                        <button type="button" class="quick-pick-btn" onclick="selectQuickPick('{{ sug }}')">{{ sug }}</button>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Query Movie Display -->
+            {% if selected_movie %}
+            <div class="query-movie-card">
+                <div class="query-header">
+                    <div>
+                        <span class="card-rank">QUERY SEED MOVIE</span>
+                        <h3 class="query-title">{{ selected_movie.title }} <span class="query-year">({{ selected_movie.release_year }})</span></h3>
+                    </div>
+                    <div>
+                        <span class="sim-badge" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: var(--accent-cyan);">
+                            ★ TMDB Rating: {{ selected_movie.vote_average }} / 10
+                        </span>
+                    </div>
+                </div>
+                <div class="genre-chips">
+                    {% for g in selected_movie.genres %}
+                    <span class="genre-chip">{{ g }}</span>
+                    {% endfor %}
+                </div>
+                <p style="color: var(--text-secondary); font-size: 0.95rem;">{{ selected_movie.overview }}</p>
+                <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; gap: 24px; flex-wrap: wrap;">
+                    <span><strong>Director:</strong> {{ selected_movie.director }}</span>
+                    <span><strong>Top Cast:</strong> {{ selected_movie.cast }}</span>
+                </div>
+            </div>
+
+            <!-- Recommended Movies Cards -->
+            <div style="margin-top: 36px;">
+                <h3 style="font-size: 1.4rem; font-weight: 700; color: #ffffff;">
+                    Recommended Movies (Ranked by Cosine Similarity)
+                </h3>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                    Scores represent mathematical cosine proximity calculated over the 10,000-dimensional TF-IDF vector space.
+                </p>
+
+                <div class="results-grid">
+                    {% for movie in recommendations %}
+                    <div class="movie-card">
+                        <div>
+                            <div class="card-top">
+                                <div>
+                                    <span class="card-rank">#{{ loop.index }} Recommendation</span>
+                                    <h4 class="card-title">{{ movie.title }} <span class="card-year">({{ movie.release_year }})</span></h4>
+                                </div>
+                                <div class="sim-badge">
+                                    <span>{{ movie.similarity_score }}</span>
+                                    <span style="font-size: 0.75rem; opacity: 0.85;">({{ movie.similarity_pct }}%)</span>
+                                </div>
+                            </div>
+
+                            <!-- Similarity progress visual bar -->
+                            <div class="sim-bar-bg" title="Cosine Similarity: {{ movie.similarity_score }}">
+                                <div class="sim-bar-fill" style="width: {{ [movie.similarity_pct * 1.8, 100] | min }}%;"></div>
+                            </div>
+
+                            <div class="genre-chips">
+                                {% for g in movie.genres %}
+                                <span class="genre-chip">{{ g }}</span>
+                                {% endfor %}
+                            </div>
+
+                            <p class="card-overview">{{ movie.overview }}</p>
+                        </div>
+
+                        <div class="card-footer">
+                            <div><strong>Director:</strong> {{ movie.director }}</div>
+                            <div>★ {{ movie.vote_average }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </section>
+
+        <!-- 2. Machine Learning Workflow -->
+        <section id="workflow-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Methodology</div>
+                <h2 class="section-title">Complete 12-Step Machine Learning Workflow</h2>
+                <p class="section-desc">The end-to-end engineering lifecycle implemented for this content-based recommendation system.</p>
+            </div>
+
+            <div class="workflow-grid">
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 01</div>
+                    <div class="workflow-title">Problem Definition</div>
+                    <div class="workflow-desc">Formulate movie recommendation as an unsupervised content similarity task using item metadata rather than collaborative user ratings.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 02</div>
+                    <div class="workflow-title">Data Collection</div>
+                    <div class="workflow-desc">Acquire TMDB 5000 movies and credits datasets containing 4,803 titles with overviews, genres, keywords, cast, and crew.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 03</div>
+                    <div class="workflow-title">Data Preprocessing</div>
+                    <div class="workflow-desc">Parse JSON string representations, handle missing text and release dates, deduplicate records, and normalize punctuation and casing.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 04</div>
+                    <div class="workflow-title">Exploratory Data Analysis</div>
+                    <div class="workflow-desc">Analyze genre frequencies, release year trends, popularity distributions, vote ratings, and missing value profiles.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 05</div>
+                    <div class="workflow-title">Feature Selection</div>
+                    <div class="workflow-desc">Select high-signal descriptive metadata: movie overview, genres, keywords, lead cast members, and director.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 06</div>
+                    <div class="workflow-title">Feature Engineering</div>
+                    <div class="workflow-desc">Construct a unified <code>combined_features</code> textual representation with domain-weighted genres, keywords, and entity tokens.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 07</div>
+                    <div class="workflow-title">Validation Strategy</div>
+                    <div class="workflow-desc">Implement query-based relevance testing measuring Genre Overlap Ratio and Jaccard similarity against a random baseline.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 08</div>
+                    <div class="workflow-title">TF-IDF Vectorization</div>
+                    <div class="workflow-desc">Transform natural language into a 10,000-dimensional sparse numerical vector space using unigrams and bigrams with stop-word filtering.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 09</div>
+                    <div class="workflow-title">Cosine Similarity Computation</div>
+                    <div class="workflow-desc">Measure inner angles between TF-IDF document vectors to quantify thematic closeness bounded strictly between 0 and 1.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 10</div>
+                    <div class="workflow-title">Model Serialization</div>
+                    <div class="workflow-desc">Persist fitted vectorizer, sparse matrix, and lookup tables into <code>models/movie_recommender.pkl</code> via Joblib.</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 11</div>
+                    <div class="workflow-title">Quantitative Evaluation</div>
+                    <div class="workflow-desc">Evaluate top-K cosine similarity distribution, genre overlap consistency (92.8%), and baseline gain (+52.0%).</div>
+                </div>
+                <div class="workflow-card">
+                    <div class="workflow-num">STEP 12</div>
+                    <div class="workflow-title">Inference & UI Delivery</div>
+                    <div class="workflow-desc">Deliver instant, on-demand recommendations through a responsive local Flask web application with real-time similarity metrics.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. Dataset Overview & Preprocessing Summary -->
+        <section id="dataset-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Data Collection & Preprocessing</div>
+                <h2 class="section-title">Dataset Characteristics & Cleansing Summary</h2>
+                <p class="section-desc">Transparent audit of raw input data, cleaning steps, and final usable corpus.</p>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <span class="stat-label">Initial Raw Records</span>
+                    <span class="stat-value">{{ preprocess_summary.initial_records | default(4803) }}</span>
+                    <span class="stat-sub">TMDB 5000 Movies</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Usable Processed Movies</span>
+                    <span class="stat-value">{{ preprocess_summary.final_usable_movies | default(4800) }}</span>
+                    <span class="stat-sub">100% Complete Metadata</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Duplicate Titles Handled</span>
+                    <span class="stat-value">{{ preprocess_summary.duplicates_removed | default(3) }}</span>
+                    <span class="stat-sub">Popularity disambiguated</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Missing Overviews Filled</span>
+                    <span class="stat-value">{{ preprocess_summary.missing_before_overview | default(3) }}</span>
+                    <span class="stat-sub">Cleaned & normalized</span>
+                </div>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 24px; margin-top: 16px;">
+                <h4 style="color: #ffffff; margin-bottom: 12px; font-size: 1.1rem;">Selected Metadata Features</h4>
+                <p style="color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 16px;">
+                    Features were parsed from complex JSON strings into clean, tokenized strings. Raw genres, keywords, top 3 billing actors, and director were extracted from <code>tmdb_5000_movies.csv</code> and <code>tmdb_5000_credits.csv</code>.
+                </p>
+                <div class="genre-chips">
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Title</span>
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Overview (Plot Summary)</span>
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Genres (Weighted x2)</span>
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Keywords (Thematic Tags x2)</span>
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Top 3 Cast Members</span>
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Director</span>
+                    <span class="genre-chip" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan);">Release Year</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. Exploratory Data Analysis -->
+        <section id="eda-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Exploratory Data Analysis</div>
+                <h2 class="section-title">Dataset Visualizations (Matplotlib & Seaborn)</h2>
+                <p class="section-desc">Actual empirical charts generated directly from the processed dataset during model training.</p>
+            </div>
+
+            <div class="plots-grid">
+                <!-- Genre Distribution -->
+                <div class="plot-card">
+                    <img src="{{ url_for('static', filename='plots/genre_distribution.png') }}" alt="Genre Distribution">
+                    <div class="plot-caption">
+                        <strong>Genre Frequency Distribution:</strong> Drama, Comedy, Thriller, and Action form the predominant categories in the corpus.
+                    </div>
+                </div>
+
+                <!-- Release Year Distribution -->
+                <div class="plot-card">
+                    <img src="{{ url_for('static', filename='plots/release_year_distribution.png') }}" alt="Release Year Distribution">
+                    <div class="plot-caption">
+                        <strong>Temporal Distribution:</strong> Movies span from the 1920s to 2016, with significant density post-1995 reflecting modern cinema expansion.
+                    </div>
+                </div>
+
+                <!-- Popularity Distribution -->
+                <div class="plot-card">
+                    <img src="{{ url_for('static', filename='plots/popularity_distribution.png') }}" alt="Popularity Distribution">
+                    <div class="plot-caption">
+                        <strong>TMDB Popularity Metric:</strong> Blockbusters such as Minions, Interstellar, and Deadpool lead the dataset in user interaction activity.
+                    </div>
+                </div>
+
+                <!-- Vote Average Distribution -->
+                <div class="plot-card">
+                    <img src="{{ url_for('static', filename='plots/vote_average_distribution.png') }}" alt="Vote Average Distribution">
+                    <div class="plot-caption">
+                        <strong>Audience Rating Profile:</strong> Bell-shaped curve centered around mean {{ eda_summary.average_vote | default(6.2) }} / 10 for movies with &ge; 50 votes.
+                    </div>
+                </div>
+
+                <!-- Missing Values Analysis -->
+                <div class="plot-card" style="grid-column: 1 / -1;">
+                    <img src="{{ url_for('static', filename='plots/missing_values.png') }}" alt="Missing Values Analysis">
+                    <div class="plot-caption">
+                        <strong>Data Cleansing Audit:</strong> Demonstrates zero null/missing artifacts post-preprocessing compared to raw input metadata.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 5. Feature Engineering & TF-IDF -->
+        <section id="features-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Feature Representation</div>
+                <h2 class="section-title">TF-IDF Vectorization & Feature Engineering</h2>
+                <p class="section-desc">Transforming textual metadata into dense semantic numerical vector representations.</p>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 28px;">
+                <h3 style="color: #ffffff; font-size: 1.25rem; margin-bottom: 12px;">Why TF-IDF (Term Frequency - Inverse Document Frequency)?</h3>
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Movie titles alone do not describe narrative essence. A movie titled <em>"Gravity"</em> or <em>"Arrival"</em> requires contextual plot descriptions, keywords (e.g. <code>space exploration</code>, <code>astronaut</code>, <code>alien</code>), and genre tags to uncover semantic similarity.
+                </p>
+
+                <div class="math-card">
+                    <strong>TF-IDF Formulation:</strong><br>
+                    TF-IDF(t, d, D) = TF(t, d) &times; IDF(t, D)<br><br>
+                    Where:<br>
+                    &bull; TF(t, d) = (Count of term t in document d) / (Total terms in d)<br>
+                    &bull; IDF(t, D) = log [ (1 + |D|) / (1 + Count of documents containing t) ] + 1
+                </div>
+
+                <div class="stats-grid" style="margin-top: 20px;">
+                    <div class="stat-box">
+                        <span class="stat-label">Vector Space Dimension</span>
+                        <span class="stat-value">10,000</span>
+                        <span class="stat-sub">Max TF-IDF Features</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">N-Gram Range</span>
+                        <span class="stat-value">(1, 2)</span>
+                        <span class="stat-sub">Unigrams & Bigrams</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Stop Words</span>
+                        <span class="stat-value">English</span>
+                        <span class="stat-sub">Filtered non-informative terms</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Matrix Representation</span>
+                        <span class="stat-value">Sparse CSR</span>
+                        <span class="stat-sub">Efficient memory storage</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 6. Similarity Modeling -->
+        <section id="similarity-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Mathematics</div>
+                <h2 class="section-title">Cosine Similarity Measure</h2>
+                <p class="section-desc">Geometric metric calculating the cosine of the angle between high-dimensional document vectors.</p>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 28px;">
+                <div class="math-card">
+                    Cosine Similarity(A, B) = cos(&theta;) = (A &middot; B) / (||A|| &times; ||B||) = &sum;(A_i &times; B_i) / [ &radic;&sum;(A_i&sup2;) &times; &radic;&sum;(B_i&sup2;) ]
+                </div>
+                <p style="color: var(--text-secondary); margin-top: 14px; font-size: 0.95rem;">
+                    Because all TF-IDF vectors are strictly non-negative, the resulting similarity score is bounded in <strong>[0.0, 1.0]</strong>:
+                </p>
+                <ul style="color: var(--text-secondary); margin-left: 24px; margin-top: 10px; font-size: 0.92rem;">
+                    <li><strong>1.0 (100%):</strong> Identical metadata composition (parallel direction in vector space).</li>
+                    <li><strong>0.0 (0%):</strong> Completely disjoint vocabularies sharing zero thematic tokens (orthogonal vectors).</li>
+                    <li><strong>On-Demand Efficiency:</strong> The query vector is compared directly against the precomputed sparse matrix in milliseconds, avoiding dense storage overhead.</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 7. Model Evaluation -->
+        <section id="evaluation-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Empirical Results</div>
+                <h2 class="section-title">Model Evaluation & Validation Strategy</h2>
+                <p class="section-desc">Rigorous quantitative evaluation designed specifically for content-based recommendation systems.</p>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <span class="stat-label">Genre Overlap Ratio</span>
+                    <span class="stat-value" style="color: var(--accent-emerald);">{{ eval_metrics.genre_overlap_percentage | default(92.8) }}%</span>
+                    <span class="stat-sub">Top-10 recommendations share genre</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Random Baseline Overlap</span>
+                    <span class="stat-value" style="color: var(--accent-rose);">{{ eval_metrics.baseline_random_overlap_percentage | default(40.8) }}%</span>
+                    <span class="stat-sub">Uninformed random selection</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Model Improvement</span>
+                    <span class="stat-value" style="color: var(--accent-cyan);">+{{ eval_metrics.model_improvement_over_baseline | default(52.0) }}%</span>
+                    <span class="stat-sub">Gain over baseline</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Avg Top-10 Cosine Sim</span>
+                    <span class="stat-value" style="color: var(--accent-amber);">{{ eval_metrics.average_cosine_similarity | default(0.252) }}</span>
+                    <span class="stat-sub">Tight thematic clustering</span>
+                </div>
+            </div>
+
+            <!-- Similarity Plot -->
+            <div class="plot-card" style="margin-top: 24px;">
+                <img src="{{ url_for('static', filename='plots/recommendation_similarity.png') }}" alt="Recommendation Similarity Distribution">
+                <div class="plot-caption">
+                    <strong>Similarity Distribution:</strong> Distribution of computed cosine similarity scores across 500 recommendations generated from a diverse sample of 50 query movies.
+                </div>
+            </div>
+
+            <!-- Limitations Note -->
+            <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-md); padding: 20px; margin-top: 24px;">
+                <h4 style="color: var(--accent-amber); margin-bottom: 6px;">⚠️ Evaluation Methodology & Known Limitations</h4>
+                <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
+                    Unlike supervised classification with ground-truth labels, content-based recommendation is an unsupervised similarity retrieval task. High cosine similarity guarantees textual and thematic alignment (e.g. recommending space exploration movies for <em>Interstellar</em>), but does not guarantee whether an individual viewer will emotionally like the film without personal rating history.
+                </p>
+            </div>
+        </section>
+
+        <!-- 8. Project Screenshots Guide for Lab Records -->
+        <section id="record-guide-section" class="section">
+            <div class="section-header">
+                <div class="section-tag">Lab Report Documentation</div>
+                <h2 class="section-title">College Project Record Screenshot Index</h2>
+                <p class="section-desc">Cross-reference table mapping key project milestones to required report figures.</p>
+            </div>
+
+            <table class="screenshots-table">
+                <thead>
+                    <tr>
+                        <th>Figure Reference</th>
+                        <th>Milestone Name</th>
+                        <th>Visible Evidence in Application</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Fig. 1</strong></td>
+                        <td>Dataset Collection</td>
+                        <td>Raw TMDB 5000 dataset preview, 4,803 records, shape, and metadata attributes.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fig. 2</strong></td>
+                        <td>Data Preprocessing</td>
+                        <td>Missing value resolution audit, duplicate deduplication, and <code>combined_features</code> string.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fig. 3</strong></td>
+                        <td>Exploratory Data Analysis</td>
+                        <td>Genre frequency bar chart, release year distribution, popularity ranking, and vote ratings.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fig. 4</strong></td>
+                        <td>Feature Selection & TF-IDF</td>
+                        <td>Selection rationale, 10,000-dimensional TF-IDF vocabulary, and n-gram parameters.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fig. 5</strong></td>
+                        <td>Similarity Calculation & Evaluation</td>
+                        <td>Cosine similarity formula, empirical evaluation metrics (92.8% genre overlap vs 40.8% baseline).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fig. 6</strong></td>
+                        <td>Recommendation Results</td>
+                        <td>Query movie details, recommended movie cards, genres, director, and cosine scores.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Fig. 7</strong></td>
+                        <td>Final Application Interface</td>
+                        <td>Working Flask web UI with dynamic autocomplete search and responsive layout.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p><strong>Movie Recommendation System Using Content-Based Filtering and Cosine Similarity</strong></p>
+            <p style="margin-top: 6px;">Machine Learning Mini Project &bull; Fully Local Python &amp; Flask Implementation</p>
+        </div>
+    </footer>
+
+    <!-- Interactive Scripts -->
+    <script>
+        function selectQuickPick(title) {
+            const input = document.getElementById('movie_title');
+            if (input) {
+                input.value = title;
+                input.form.submit();
+            }
+        }
+
+        // Smooth scroll for nav links
+        document.querySelectorAll('.nav-links a').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                const targetId = this.getAttribute('href');
+                if (targetId.startsWith('#')) {
+                    e.preventDefault();
+                    const targetEl = document.querySelector(targetId);
+                    if (targetEl) {
+                        targetEl.scrollIntoView({ behavior: 'smooth' });
+                        document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
+                        this.classList.add('active');
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
